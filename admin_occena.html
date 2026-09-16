@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tableau de bord — Fréquence & OCCENA</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,Arial;background:#f5f7fb;color:#1d2433}
+header{background:linear-gradient(135deg,#2147b8,#2b66df);color:#fff;padding:26px 18px}
+header h1{margin:0 0 6px;font-size:28px} header p{margin:0;opacity:.9}
+main{max-width:1250px;margin:auto;padding:18px} .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+button{border:0;border-radius:12px;padding:12px 16px;font-weight:700} .primary{background:#176c46;color:white}
+.secondary{background:white;border:1px solid #d8deea} input{padding:12px;border:1px solid #d8deea;border-radius:12px;min-width:280px;flex:1}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+.card{background:white;border:1px solid #e1e6ef;border-radius:18px;padding:18px} .kpi{font-size:34px;font-weight:800;margin-top:8px}
+.muted{color:#6a7382;font-size:14px} .status{padding:10px 12px;border-radius:12px;background:#eef4ff;color:#2147b8;margin-bottom:14px}
+.error{background:#fff0f0;color:#a33131} .table-wrap{overflow:auto;background:white;border:1px solid #e1e6ef;border-radius:18px}
+table{border-collapse:collapse;width:100%;min-width:1500px} th,td{padding:11px 9px;border-bottom:1px solid #edf0f5;text-align:left;font-size:13px;vertical-align:top}
+th{position:sticky;top:0;background:#f8fafc;white-space:nowrap} .score{font-weight:800}
+.bar{height:7px;background:#e9edf4;border-radius:999px;overflow:hidden;min-width:100px;margin-top:5px} .bar span{display:block;height:100%;background:#2b66df}
+.pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#f4f4f5;color:#686b73;font-size:12px;font-weight:700}
+</style></head>
+<body>
+<header><h1>Tableau de bord — Fréquence & OCCENA</h1><p>Usage réel des produits + données OCCENA</p></header>
+<main>
+<div class="toolbar">
+<button class="primary" onclick="charger()">Actualiser</button>
+<button class="secondary" onclick="exporterCSV()">Exporter CSV</button>
+<input id="recherche" placeholder="Rechercher un produit ou fournisseur…" oninput="afficherProduits()">
+</div>
+<div id="status" class="status">Chargement…</div>
+<section class="grid">
+<div class="card"><div class="muted">Établissements ayant répondu</div><div class="kpi" id="kpi-etab">—</div></div>
+<div class="card"><div class="muted">Enquêtes validées</div><div class="kpi" id="kpi-finies">—</div></div>
+<div class="card"><div class="muted">Réponses enregistrées</div><div class="kpi" id="kpi-reponses">—</div></div>
+<div class="card"><div class="muted">Produits du référentiel</div><div class="kpi" id="kpi-produits">—</div></div>
+<div class="card"><div class="muted">Produits avec donnée OCCENA</div><div class="kpi" id="kpi-occena">—</div></div>
+</section>
+<section class="card" style="margin-bottom:18px">
+<strong>Lecture :</strong> le score fréquence va de 0 à 5. Les données OCCENA restent séparées tant que l’échelle OCCENA n’est pas documentée précisément.
+</section>
+<div class="table-wrap"><table><thead><tr>
+<th>Produit</th><th>Fournisseur</th><th>Volume annuel</th><th>Réponses</th><th>Jamais</th><th>Rarement</th>
+<th>1×/mois</th><th>2–3×/mois</th><th>1×/semaine</th><th>Plusieurs×/semaine</th><th>Score fréquence</th>
+<th>Score OCCENA</th><th>Version OCCENA</th><th>Nb additifs</th><th>Additifs</th><th>Points de vigilance</th>
+</tr></thead><tbody id="tbody"></tbody></table></div>
+</main>
+<script>
+const sb=window.supabase.createClient('https://avhyoujlplwkuccvhnvz.supabase.co','sb_publishable_63ZJtw7uGovMEiZgX8V8zg_02TdkDGY'); let produits=[];
+async function charger(){
+ let s=document.getElementById('status'); s.className='status'; s.textContent='Actualisation…';
+ const [g,p]=await Promise.all([sb.rpc('enquete_stats_globales'),sb.rpc('enquete_stats_produits')]);
+ if(g.error||p.error){s.className='status error';s.textContent='Erreur : '+(g.error?.message||p.error?.message);return;}
+ const x=(g.data&&g.data[0])||{};
+ document.getElementById('kpi-etab').textContent=x.total_etablissements??0;
+ document.getElementById('kpi-finies').textContent=x.enquetes_validees??0;
+ document.getElementById('kpi-reponses').textContent=x.total_reponses??0;
+ document.getElementById('kpi-produits').textContent=x.total_produits??0;
+ document.getElementById('kpi-occena').textContent=x.produits_occena_renseignes??0;
+ produits=p.data||[]; afficherProduits(); s.textContent='Données actualisées.';
+}
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
+function fmt(v){return (v===null||v===undefined||v==='')?'<span class="pill">À renseigner</span>':esc(v);}
+function afficherProduits(){
+ const q=(document.getElementById('recherche').value||'').toLowerCase().trim();
+ const rows=produits.filter(r=>!q||String(r.produit||'').toLowerCase().includes(q)||String(r.fournisseur||'').toLowerCase().includes(q));
+ document.getElementById('tbody').innerHTML=rows.map(r=>{
+  const sc=r.score_frequence==null?null:Number(r.score_frequence);
+  return `<tr><td><strong>${esc(r.produit)}</strong></td><td>${esc(r.fournisseur)}</td><td>${r.volume_annuel??''}</td><td>${r.nb_reponses||0}</td>
+  <td>${r.jamais||0}</td><td>${r.rarement||0}</td><td>${r.fois_mois||0}</td><td>${r.deux_trois_mois||0}</td><td>${r.fois_semaine||0}</td><td>${r.plusieurs_semaine||0}</td>
+  <td class="score">${sc==null?'—':sc.toFixed(2)}${sc==null?'':`<div class="bar"><span style="width:${Math.max(0,Math.min(100,sc/5*100))}%"></span></div>`}</td>
+  <td>${fmt(r.score_occena)}</td><td>${fmt(r.version_occena)}</td><td>${fmt(r.nb_additifs)}</td><td>${fmt(r.additifs)}</td><td>${fmt(r.points_vigilance)}</td></tr>`;
+ }).join('');
+}
+function exporterCSV(){
+ const h=['Produit','Fournisseur','Volume annuel','Réponses','Jamais','Rarement','1 fois/mois','2-3 fois/mois','1 fois/semaine','Plusieurs fois/semaine','Score fréquence','Score OCCENA','Version OCCENA','Nb additifs','Additifs','Points de vigilance'];
+ const rows=[h,...produits.map(r=>[r.produit,r.fournisseur,r.volume_annuel,r.nb_reponses,r.jamais,r.rarement,r.fois_mois,r.deux_trois_mois,r.fois_semaine,r.plusieurs_semaine,r.score_frequence,r.score_occena,r.version_occena,r.nb_additifs,r.additifs,r.points_vigilance])];
+ const csv='\uFEFF'+rows.map(a=>a.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(';')).join('\n');
+ const b=new Blob([csv],{type:'text/csv;charset=utf-8'}),a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='synthese_frequence_occena.csv';a.click();
+}
+charger();
+</script></body></html>
