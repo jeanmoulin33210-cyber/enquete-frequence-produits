@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tableau de bord — Enquête fréquence des produits</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f5f7fb;color:#1d2433}
+    header{background:linear-gradient(135deg,#2147b8,#2b66df);color:#fff;padding:26px 18px}
+    header h1{margin:0 0 6px;font-size:28px}
+    header p{margin:0;opacity:.9}
+    main{max-width:1100px;margin:0 auto;padding:18px}
+    .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    button{border:0;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer}
+    .primary{background:#176c46;color:white}
+    .secondary{background:white;border:1px solid #d8deea;color:#273043}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:18px}
+    .card{background:white;border:1px solid #e1e6ef;border-radius:18px;padding:18px;box-shadow:0 4px 18px rgba(0,0,0,.04)}
+    .kpi{font-size:34px;font-weight:800;margin-top:8px}
+    .muted{color:#6a7382;font-size:14px}
+    h2{margin:4px 0 12px}
+    .table-wrap{overflow:auto;background:white;border:1px solid #e1e6ef;border-radius:18px}
+    table{border-collapse:collapse;width:100%;min-width:980px}
+    th,td{padding:12px 10px;border-bottom:1px solid #edf0f5;text-align:left;font-size:14px}
+    th{position:sticky;top:0;background:#f8fafc;z-index:1}
+    .score{font-weight:800}
+    .bar{height:8px;background:#e9edf4;border-radius:999px;overflow:hidden;min-width:120px}
+    .bar > span{display:block;height:100%;background:#2b66df}
+    .status{padding:10px 12px;border-radius:12px;background:#eef4ff;color:#2147b8;margin-bottom:14px}
+    .error{background:#fff0f0;color:#a33131}
+    input{padding:12px 14px;border:1px solid #d8deea;border-radius:12px;min-width:250px;font-size:16px}
+    footer{text-align:center;color:#7a8493;padding:24px}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Tableau de bord — Enquête fréquence des produits</h1>
+  <p>Restauration scolaire · synthèse des réponses des établissements</p>
+</header>
+
+<main>
+  <div class="toolbar">
+    <button class="primary" onclick="charger()">Actualiser</button>
+    <button class="secondary" onclick="exporterCSV()">Exporter la synthèse CSV</button>
+    <input id="recherche" placeholder="Rechercher un produit ou fournisseur…" oninput="afficherProduits()">
+  </div>
+
+  <div id="status" class="status">Chargement…</div>
+
+  <section class="grid">
+    <div class="card"><div class="muted">Établissements ayant répondu</div><div class="kpi" id="kpi-etab">—</div></div>
+    <div class="card"><div class="muted">Enquêtes validées</div><div class="kpi" id="kpi-finies">—</div></div>
+    <div class="card"><div class="muted">Réponses enregistrées</div><div class="kpi" id="kpi-reponses">—</div></div>
+    <div class="card"><div class="muted">Taux de validation</div><div class="kpi" id="kpi-taux">—</div></div>
+  </section>
+
+  <section class="card" style="margin-bottom:18px">
+    <h2>Lecture des fréquences</h2>
+    <div class="muted">Le score moyen va de 0 à 5 : 0 = jamais, 5 = plusieurs fois par semaine. Il sert uniquement à comparer les fréquences d’usage, pas à qualifier la qualité nutritionnelle du produit.</div>
+  </section>
+
+  <section>
+    <h2>Fréquences par produit</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Produit</th>
+            <th>Fournisseur</th>
+            <th>Réponses</th>
+            <th>Jamais</th>
+            <th>Rarement</th>
+            <th>1×/mois</th>
+            <th>2–3×/mois</th>
+            <th>1×/semaine</th>
+            <th>Plusieurs×/semaine</th>
+            <th>Score moyen</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<footer>Les données affichées ici sont des agrégats : aucune liste nominative d’établissements n’est exposée par cette page.</footer>
+
+<script>
+const SUPABASE_URL='https://avhyoujlplwkuccvhnvz.supabase.co';
+const SUPABASE_KEY='sb_publishable_63ZJtw7uGovMEiZgX8V8zg_02TdkDGY';
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+
+let produits=[];
+
+async function charger(){
+  const status=document.getElementById('status');
+  status.className='status';
+  status.textContent='Actualisation des données…';
+
+  const [g,p]=await Promise.all([
+    sb.rpc('enquete_stats_globales'),
+    sb.rpc('enquete_stats_produits')
+  ]);
+
+  if(g.error || p.error){
+    status.className='status error';
+    status.textContent='Erreur : '+(g.error?.message || p.error?.message || 'connexion impossible');
+    return;
+  }
+
+  const s=(g.data && g.data[0]) || {};
+  document.getElementById('kpi-etab').textContent=s.total_etablissements ?? 0;
+  document.getElementById('kpi-finies').textContent=s.enquetes_validees ?? 0;
+  document.getElementById('kpi-reponses').textContent=s.total_reponses ?? 0;
+  const total=Number(s.total_etablissements||0), finies=Number(s.enquetes_validees||0);
+  document.getElementById('kpi-taux').textContent= total ? Math.round(finies*100/total)+' %' : '0 %';
+
+  produits=p.data || [];
+  afficherProduits();
+  status.textContent='Données actualisées.';
+}
+
+function esc(v){
+  return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+function afficherProduits(){
+  const q=(document.getElementById('recherche').value||'').toLowerCase().trim();
+  const rows=produits.filter(r=>!q || String(r.produit||'').toLowerCase().includes(q) || String(r.fournisseur||'').toLowerCase().includes(q));
+  document.getElementById('tbody').innerHTML=rows.map(r=>{
+    const score=Number(r.score_moyen||0);
+    return `<tr>
+      <td><strong>${esc(r.produit)}</strong></td>
+      <td>${esc(r.fournisseur)}</td>
+      <td>${r.nb_reponses||0}</td>
+      <td>${r.jamais||0}</td>
+      <td>${r.rarement||0}</td>
+      <td>${r.fois_mois||0}</td>
+      <td>${r.deux_trois_mois||0}</td>
+      <td>${r.fois_semaine||0}</td>
+      <td>${r.plusieurs_semaine||0}</td>
+      <td class="score">${score.toFixed(2)}<div class="bar"><span style="width:${Math.max(0,Math.min(100,score/5*100))}%"></span></div></td>
+    </tr>`;
+  }).join('');
+}
+
+function exporterCSV(){
+  if(!produits.length) return;
+  const sep=';';
+  const header=['Produit','Fournisseur','Réponses','Jamais','Rarement','1 fois/mois','2-3 fois/mois','1 fois/semaine','Plusieurs fois/semaine','Score moyen'];
+  const lignes=[header];
+  for(const r of produits){
+    lignes.push([
+      r.produit,r.fournisseur,r.nb_reponses,r.jamais,r.rarement,r.fois_mois,r.deux_trois_mois,r.fois_semaine,r.plusieurs_semaine,Number(r.score_moyen||0).toFixed(2)
+    ]);
+  }
+  const csv='\uFEFF'+lignes.map(row=>row.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(sep)).join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='synthese_enquete_frequence_produits.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+charger();
+</script>
+</body>
+</html>
